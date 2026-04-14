@@ -88,8 +88,9 @@ export default function Home() {
     }
 
     setGenerating(false);
+    const allGenerated = updated.every((s) => s.cartoon !== null);
     setStripReady(true);
-    setTimeout(fireConfetti, 300);
+    if (allGenerated) setTimeout(fireConfetti, 300);
   };
 
   const downloadStrip = async () => {
@@ -220,7 +221,6 @@ export default function Home() {
                   src={slot.cartoon!}
                   alt={`Cartoon ${i + 1}`}
                   style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                  crossOrigin="anonymous"
                 />
               </div>
             ))}
