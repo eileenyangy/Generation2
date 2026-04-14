@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useCallback } from "react";
+import confetti from "canvas-confetti";
 
 interface PhotoSlot {
   original: string | null;
@@ -19,6 +20,17 @@ export default function Home() {
   const [stripReady, setStripReady] = useState(false);
   const [generating, setGenerating] = useState(false);
   const stripRef = useRef<HTMLDivElement>(null);
+
+  const fireConfetti = useCallback(() => {
+    const end = Date.now() + 2500;
+    const colors = ["#ff6b6b", "#ffd93d", "#6bcb77", "#4d96ff", "#ff6bff"];
+    const frame = () => {
+      confetti({ particleCount: 6, angle: 60, spread: 55, origin: { x: 0 }, colors });
+      confetti({ particleCount: 6, angle: 120, spread: 55, origin: { x: 1 }, colors });
+      if (Date.now() < end) requestAnimationFrame(frame);
+    };
+    frame();
+  }, []);
 
   const handleFileChange = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -77,6 +89,7 @@ export default function Home() {
 
     setGenerating(false);
     setStripReady(true);
+    setTimeout(fireConfetti, 300);
   };
 
   const downloadStrip = async () => {
