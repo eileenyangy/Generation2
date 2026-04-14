@@ -1,65 +1,255 @@
-import Image from "next/image";
+"use client";
+
+import { useRef, useState } from "react";
+
+interface PhotoSlot {
+  original: string | null;
+  cartoon: string | null;
+  loading: boolean;
+}
+
+const EMPTY_SLOT: PhotoSlot = { original: null, cartoon: null, loading: false };
 
 export default function Home() {
+  const [slots, setSlots] = useState<PhotoSlot[]>([
+    { ...EMPTY_SLOT },
+    { ...EMPTY_SLOT },
+    { ...EMPTY_SLOT },
+  ]);
+  const [stripReady, setStripReady] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const stripRef = useRef<HTMLDivElement>(null);
+
+  const handleFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    index: number
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const preview = ev.target?.result as string;
+      setSlots((prev) =>
+        prev.map((s, i) =>
+          i === index ? { ...s, original: preview, cartoon: null } : s
+        )
+      );
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const generateStrip = async () => {
+    const filled = slots.filter((s) => s.original);
+    if (filled.length < 3) return;
+
+    setGenerating(true);
+    setStripReady(false);
+
+    const updated = [...slots];
+
+    for (let i = 0; i < 3; i++) {
+      updated[i] = { ...updated[i], loading: true };
+      setSlots([...updated]);
+
+      try {
+        const res = await fetch("/api/cartoonify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageUrl: updated[i].original }),
+        });
+        const data = await res.json();
+        if (data.error) console.error(`Photo ${i + 1} error:`, data.error);
+        updated[i] = {
+          ...updated[i],
+          cartoon: data.output || null,
+          loading: false,
+        };
+      } catch (e) {
+        console.error(`Photo ${i + 1} failed:`, e);
+        updated[i] = { ...updated[i], loading: false };
+      }
+      setSlots([...updated]);
+
+      // Wait between requests to avoid rate limiting
+      if (i < 2) await new Promise((r) => setTimeout(r, 12000));
+    }
+
+    setGenerating(false);
+    setStripReady(true);
+  };
+
+  const downloadStrip = async () => {
+    if (!stripRef.current) return;
+    const html2canvas = (await import("html2canvas")).default;
+    const canvas = await html2canvas(stripRef.current, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#111",
+    });
+    const link = document.createElement("a");
+    link.download = "photobooth-strip.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  };
+
+  const allUploaded = slots.every((s) => s.original !== null);
+  const allDone = slots.every((s) => s.cartoon !== null);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <main className="min-h-screen bg-black text-white flex flex-col items-center py-12 px-4">
+      {/* Header */}
+      <div className="text-center mb-10">
+        <h1 className="text-4xl font-bold tracking-tight mb-2">PHOTOBOOTH</h1>
+        <p className="text-zinc-400 text-sm tracking-widest">
+          UPLOAD 3 PHOTOS — GET A CARTOON STRIP
+        </p>
+      </div>
+
+      {/* Upload slots */}
+      {!stripReady && (
+        <div className="flex gap-4 mb-8 flex-wrap justify-center">
+          {slots.map((slot, i) => (
+            <label
+              key={i}
+              className="relative cursor-pointer group"
+              style={{ width: 200, height: 200 }}
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => handleFileChange(e, i)}
+              />
+              <div
+                className="w-full h-full border-2 border-dashed border-zinc-600 group-hover:border-white transition-colors flex items-center justify-center overflow-hidden relative"
+                style={{ background: "#111" }}
+              >
+                {slot.original ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={slot.original}
+                    alt={`Photo ${i + 1}`}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="text-center text-zinc-500">
+                    <div className="text-3xl mb-1">+</div>
+                    <div className="text-xs tracking-widest">PHOTO {i + 1}</div>
+                  </div>
+                )}
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {/* Generate button */}
+      {!stripReady && (
+        <button
+          onClick={generateStrip}
+          disabled={!allUploaded || generating}
+          className="px-10 py-3 bg-white text-black font-bold tracking-widest text-sm hover:bg-zinc-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed mb-4"
+        >
+          {generating ? "GENERATING..." : "MAKE MY STRIP"}
+        </button>
+      )}
+
+      {/* Progress while generating */}
+      {generating && (
+        <div className="flex flex-col items-center gap-2 mb-6">
+          <div className="flex gap-4">
+            {slots.map((slot, i) => (
+              <div key={i} className="text-xs tracking-widest text-zinc-400">
+                {slot.loading ? "RENDERING..." : slot.cartoon ? "✓ DONE" : "WAITING"}
+              </div>
+            ))}
+          </div>
+          <p className="text-zinc-600 text-xs">this takes ~30 seconds</p>
+        </div>
+      )}
+
+      {/* Photobooth strip */}
+      {allDone && (
+        <div className="flex flex-col items-center gap-6">
+          <div
+            ref={stripRef}
+            style={{
+              background: "#111",
+              padding: "16px 12px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+              border: "3px solid #333",
+              width: 260,
+            }}
+          >
+            {/* Strip header */}
+            <div
+              style={{
+                textAlign: "center",
+                color: "#fff",
+                fontFamily: "monospace",
+                fontSize: 11,
+                letterSpacing: "0.2em",
+                paddingBottom: 8,
+                borderBottom: "1px solid #333",
+              }}
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              PHOTOBOOTH
+            </div>
+
+            {/* Photos */}
+            {slots.map((slot, i) => (
+              <div key={i} style={{ width: "100%", aspectRatio: "1/1", overflow: "hidden" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={slot.cartoon!}
+                  alt={`Cartoon ${i + 1}`}
+                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  crossOrigin="anonymous"
+                />
+              </div>
+            ))}
+
+            {/* Strip footer */}
+            <div
+              style={{
+                textAlign: "center",
+                color: "#666",
+                fontFamily: "monospace",
+                fontSize: 9,
+                letterSpacing: "0.15em",
+                paddingTop: 8,
+                borderTop: "1px solid #333",
+              }}
+            >
+              {new Date().toLocaleDateString("en-US", {
+                month: "long",
+                year: "numeric",
+              }).toUpperCase()}
+            </div>
+          </div>
+
+          <div className="flex gap-4">
+            <button
+              onClick={downloadStrip}
+              className="px-8 py-3 bg-white text-black font-bold tracking-widest text-sm hover:bg-zinc-200 transition-colors"
+            >
+              DOWNLOAD STRIP
+            </button>
+            <button
+              onClick={() => {
+                setSlots([{ ...EMPTY_SLOT }, { ...EMPTY_SLOT }, { ...EMPTY_SLOT }]);
+                setStripReady(false);
+              }}
+              className="px-8 py-3 border border-zinc-600 text-white font-bold tracking-widest text-sm hover:border-white transition-colors"
+            >
+              START OVER
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+      )}
+    </main>
   );
 }
